@@ -7,7 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- REFERÊNCIAS
 local Factory = require(script.Parent.NetworkFactory)
 local Logger = require(ReplicatedStorage.Shared.Logger)
-local SerdeLayer = require(ReplicatedStorage.Shared.SerdeLayer) -- Agora usando o init.lua automático
+local SerdeLayer = require(ReplicatedStorage.Shared.SerdeLayer) 
 
 export type RemoteType = Factory.RemoteType
 export type NetworkStructure = { [string]: RemoteType }
