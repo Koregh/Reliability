@@ -5,3 +5,4 @@ A networking wrapper for Roblox, developed in Luau, focused on scalability for l
 # Credits 
 - Original Authors: realkastien and Galvagniofc
 - Architecture and Refactoring: Koregh
+- Link: https://github.com/realkastien/Reliability
