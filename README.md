@@ -1,4 +1,4 @@
-# Reliability
+# Reliability V0.0.1
 A networking wrapper for Roblox, developed in Luau, focused on scalability for large servers and protection against abuse.
 
 
