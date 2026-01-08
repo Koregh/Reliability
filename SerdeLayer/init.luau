@@ -25,7 +25,7 @@ local Serde = {
 -- Tabela interna para busca rápida
 local Modules: { [number | string]: any } = {}
 
--- INICIALIZAÇÃO AUTOMÁTICA 
+
 -- Este loop carrega todos os seus ModuleScripts e os vincula aos IDs
 for id, name in Serde.IDs do
 	local module = script:FindFirstChild(name)
@@ -38,7 +38,7 @@ for id, name in Serde.IDs do
 	end
 end
 
--- METATABLE PARA ACESSO DINÂMICO 
+
 -- Permite que você faça require(SerdeLayer).Vector3 ou require(SerdeLayer)[6]
 setmetatable(Serde, {
 	__index = function(_, key)
@@ -46,7 +46,6 @@ setmetatable(Serde, {
 	end
 })
 
--- FUNÇÕES AUXILIARES DE ELITE 
 
 --- @public Identifica o compressor lendo o Byte 0 do buffer
 function Serde.getCompressorFromBuffer(buf: buffer): PacketSerde?
