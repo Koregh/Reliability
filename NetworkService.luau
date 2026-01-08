@@ -61,7 +61,6 @@ function NetworkService._processIncomingArgs(args: {any})
 	for i, v in args do
 		if typeof(v) == "buffer" then
 			-- Tenta encontrar um Serde compatível (Ex: CFrameSerde)
-			-- Se você usou o sistema de Header IDs, aqui seria o lugar de ler o byte 0
 			if Serdes.CFrameSerde then
 				args[i] = Serdes.CFrameSerde.Deserialize(nil, v)
 			end
@@ -110,13 +109,13 @@ function NetworkService.onEvent(remoteName: string, remoteType: RemoteType, call
 	local remote = NetworkService.getRemote(remoteName, remoteType) :: RemoteEvent
 	
 	return remote.OnServerEvent:Connect(function(player, ...)
-		-- 1. Anti-Spam
+		-- Anti-Spam
 		if NetworkService._isSpamming(player, remoteName, customLimit) then return end
 		
-		-- 2. Deserialização (SerdeLayer)
+		-- Deserialização (SerdeLayer)
 		local processedArgs = NetworkService._processIncomingArgs({...})
 		
-		-- 3. Execução Protegida
+		-- Execução Protegida
 		task.spawn(function()
 			local success, err = pcall(callback, player, unpack(processedArgs))
 			if not success then
@@ -126,7 +125,7 @@ function NetworkService.onEvent(remoteName: string, remoteType: RemoteType, call
 	end)
 end
 
--- [[ TRANSMISSÃO (FIRE) ]] --
+-- TRANSMISSÃO (FIRE) --
 
 function NetworkService.fire(remote: RemoteEvent | UnreliableRemoteEvent, player: Player, ...: any)
 	if not (remote and player) then 
