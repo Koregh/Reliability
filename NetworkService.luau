@@ -4,7 +4,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- REFERÊNCIAS
 local Factory = require(script.Parent.NetworkFactory)
 local Logger = require(ReplicatedStorage.Shared.Logger)
 local SerdeLayer = require(ReplicatedStorage.Shared.SerdeLayer) 
@@ -26,8 +25,6 @@ Players.PlayerRemoving:Connect(function(player)
 	RateLimitMap[player.UserId] = nil
 end)
 
--- MÉTODOS PRIVADOS --
-
 --- @private Lógica de Anti-Spam
 function NetworkService._isSpamming(player: Player, remoteName: string, customLimit: number?): boolean
 	local now = os.clock()
@@ -46,40 +43,71 @@ function NetworkService._isSpamming(player: Player, remoteName: string, customLi
 	return false
 end
 
---- @private DESERIALIZAÇÃO AUTOMÁTICA
-function NetworkService._processIncomingArgs(args: {any})
+--- @private DESERIALIZAÇÃO DINÂMICA (Lê o ID do Byte 0)
+function NetworkService._processIncomingArgs(args: {any}, contract: {string}?)
+	local processed = {}
+	
 	for i, v in args do
 		if typeof(v) == "buffer" then
-			if SerdeLayer.CFrame then
-				args[i] = SerdeLayer.CFrame.Deserialize(nil, v)
+			-- Busca o compressor correto pelo ID gravado no buffer
+			local compressor = SerdeLayer.getCompressorFromBuffer(v)
+			
+			if compressor then
+				local data = compressor.Deserialize(nil, v)
+				
+				-- VALIDAÇÃO DE CONTRATO (Anti-Exploit)
+				if contract and contract[i] then
+					if typeof(data) ~= contract[i] then
+						Logger.Error("Security", `Contrato violado! Pos {i} esperava {contract[i]}, recebeu {typeof(data)}`)
+						return nil -- Aborta se o tipo for malicioso
+					end
+				end
+				
+				table.insert(processed, data)
+			else
+				Logger.Warn("Network", "Recebi um buffer com ID não mapeado no SerdeLayer!")
 			end
+		else
+			-- Dados que não são buffer (ex: strings puras ou números)
+			if contract and contract[i] and typeof(v) ~= contract[i] then
+				Logger.Error("Security", `Tipo puro inválido! Pos {i} esperava {contract[i]}`)
+				return nil
+			end
+			table.insert(processed, v)
 		end
 	end
-	return args
+	
+	return processed
 end
 
---- @private SERIALIZAÇÃO AUTOMÁTICA
+--- @private SERIALIZAÇÃO AUTOMÁTICA (Para enviar ao Cliente)
 function NetworkService._processOutgoingArgs(args: {any})
+	local processed = {}
 	for i, v in args do
 		local typeName = typeof(v)
-		local compressor = SerdeLayer[typeName]
+		local compressor = SerdeLayer[typeName] -- Busca por nome: "Vector3", "CFrame"
 		
 		if compressor and compressor.Serialize then
-			args[i] = compressor.Serialize(nil, v)
+			table.insert(processed, compressor.Serialize(nil, v))
+		else
+			table.insert(processed, v)
 		end
 	end
-	return args
+	return processed
 end
 
--- MÉTODOS PÚBLICOS --
-
-function NetworkService.onEvent(remoteName: string, remoteType: RemoteType, callback: (Player, ...any) -> (), customLimit: number?): RBXScriptConnection
+--- @public Ouvinte de Eventos com Suporte a Contrato
+function NetworkService.onEvent(remoteName: string, remoteType: RemoteType, callback: (Player, ...any) -> (), customLimit: number?, contract: {string}?): RBXScriptConnection
 	local remote = NetworkService.getRemote(remoteName, remoteType) :: RemoteEvent
 	
 	return remote.OnServerEvent:Connect(function(player, ...)
 		if NetworkService._isSpamming(player, remoteName, customLimit) then return end
 		
-		local processedArgs = NetworkService._processIncomingArgs({...})
+		-- Processa e Valida os argumentos
+		local processedArgs = NetworkService._processIncomingArgs({...}, contract)
+		
+		-- Se a validação falhou, não executa o callback
+		if not processedArgs then return end
 		
 		task.spawn(function()
 			local success, err = pcall(callback, player, unpack(processedArgs))
