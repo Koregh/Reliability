@@ -2,7 +2,6 @@
 local Players = game:GetService("Players")
 local Factory = require(script.Parent.NetworkFactory)
 
--- Re-exportando tipos para o desenvolvedor
 export type RemoteType = Factory.RemoteType
 export type NetworkStructure = { [string]: RemoteType }
 
@@ -18,7 +17,7 @@ function NetworkService.getRemote(name: string, remoteType: RemoteType): any
 	return Factory.create(name, remoteType)
 end
 
---- @public Cria uma rede mapeada (SOLID: Interface Segregation)
+--- @public Cria uma rede mapeada 
 function NetworkService.getNetwork(structure: NetworkStructure, prefix: string?): { [string]: any }
 	local network = {}
 	local remotePrefix = prefix or ""
@@ -38,7 +37,7 @@ function NetworkService.fireSelected(remote: RemoteEvent | UnreliableRemoteEvent
 	end
 end
 
---- @public Disparo Otimizado com Lookup Table (Performance Senior)
+--- @public Disparo Otimizado com Lookup Table
 function NetworkService.fireExcept(remote: RemoteEvent | UnreliableRemoteEvent, except: {Player}, ...: any)
 	assert(remote, "[NetworkService] Remote não definido")
 	
