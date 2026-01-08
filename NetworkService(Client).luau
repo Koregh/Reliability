@@ -1,13 +1,49 @@
 --!strict
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Factory = require(script.Parent.NetworkFactory)
+
+-- IMPORTANTE: Pasta onde ficam todos os Serdes (Shared)
+local SerdeFolder = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Serdes")
 
 export type RemoteType = Factory.RemoteType
 export type NetworkStructure = { [string]: RemoteType }
 
 local NetworkService = {}
 
--- Cache para evitar chamadas repetitivas ao Factory
+-- Cache e Carregamento de Serdes
 local NetworkCache: { [string]: any } = {}
+local Serdes: { [string]: any } = {}
+
+for _, module in SerdeFolder:GetChildren() do
+	if module:IsA("ModuleScript") then
+		Serdes[module.Name] = require(module)
+	end
+end
+
+--- @private Transforma dados em Buffers antes do envio (CFrame, Array, etc)
+local function _processOutgoingArgs(args: {any})
+	for i, v in args do
+		-- Se for CFrame e você tiver o Serde, converte para buffer automaticamente
+		if typeof(v) == "CFrame" and Serdes.CFrame then
+			args[i] = Serdes.CFrame.Serialize(nil, v)
+		elseif typeof(v) == "table" and Serdes.Array then
+			args[i] = Serdes.Array.Serialize(nil, v)
+		end
+	end
+	return args
+end
+
+--- @private Deserializa buffers recebidos do servidor
+local function _processIncomingArgs(args: {any})
+	for i, v in args do
+		if typeof(v) == "buffer" then
+			if Serdes.CFrame then
+				args[i] = Serdes.CFrame.Deserialize(nil, v)
+			end
+		end
+	end
+	return args
+end
 
 --- @public Obtém um Remote com proteção de Cache e Timeout
 function NetworkService.getRemote(name: string, remoteType: RemoteType): any
@@ -15,11 +51,18 @@ function NetworkService.getRemote(name: string, remoteType: RemoteType): any
 		return NetworkCache[name]
 	end
 
-	-- O Factory já deve ter o timeout que implementamos anteriormente
 	local remote = Factory.waitForRemote(name, remoteType)
 	NetworkCache[name] = remote
 	
 	return remote
+end
+
+--- @public Envia um evento para o servidor com compressão automática
+function NetworkService.send(name: string, remoteType: RemoteType, ...: any)
+	local remote = NetworkService.getRemote(name, remoteType) :: RemoteEvent
+	local processedArgs = _processOutgoingArgs({...})
+	
+	remote:FireServer(unpack(processedArgs))
 end
 
 --- @public Constrói uma rede completa
@@ -34,13 +77,12 @@ function NetworkService.getNetwork(structure: NetworkStructure, prefix: string?)
 	return network
 end
 
---- @public Listener Seguro (Middleware)
--- Adiciona uma camada que limpa a conexão automaticamente se necessário
--- ou formata os dados antes de entregar ao script principal
+--- @public Listener Seguro com Deserialização Automática
 function NetworkService.onEvent(remote: RemoteEvent | UnreliableRemoteEvent, callback: (...any) -> ()): RBXScriptConnection
 	return remote.OnClientEvent:Connect(function(...)
-		-- Aqui você poderia adicionar um SerdeLayer.decode(...) se fosse usar compressão
-		callback(...)
+		-- Se o servidor enviar um buffer, o cliente converte de volta para CFrame/Array
+		local processedArgs = _processIncomingArgs({...})
+		callback(unpack(processedArgs))
 	end)
 end
 
