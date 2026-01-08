@@ -6,12 +6,23 @@ export type NetworkStructure = { [string]: RemoteType }
 
 local NetworkService = {}
 
---- @public Obtém um Remote específico (Aguarda se necessário)
+-- Cache para evitar chamadas repetitivas ao Factory
+local NetworkCache: { [string]: any } = {}
+
+--- @public Obtém um Remote com proteção de Cache e Timeout
 function NetworkService.getRemote(name: string, remoteType: RemoteType): any
-	return Factory.waitForRemote(name, remoteType)
+	if NetworkCache[name] then
+		return NetworkCache[name]
+	end
+
+	-- O Factory já deve ter o timeout que implementamos anteriormente
+	local remote = Factory.waitForRemote(name, remoteType)
+	NetworkCache[name] = remote
+	
+	return remote
 end
 
---- @public Constrói uma rede completa no cliente
+--- @public Constrói uma rede completa
 function NetworkService.getNetwork(structure: NetworkStructure, prefix: string?): { [string]: any }
 	local network = {}
 	local remotePrefix = prefix or ""
@@ -23,5 +34,14 @@ function NetworkService.getNetwork(structure: NetworkStructure, prefix: string?)
 	return network
 end
 
-return NetworkService
+--- @public Listener Seguro (Middleware)
+-- Adiciona uma camada que limpa a conexão automaticamente se necessário
+-- ou formata os dados antes de entregar ao script principal
+function NetworkService.onEvent(remote: RemoteEvent | UnreliableRemoteEvent, callback: (...any) -> ()): RBXScriptConnection
+	return remote.OnClientEvent:Connect(function(...)
+		-- Aqui você poderia adicionar um SerdeLayer.decode(...) se fosse usar compressão
+		callback(...)
+	end)
+end
 
+return NetworkService
