@@ -1,25 +1,30 @@
 --!strict
+-- NetworkService.lua
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Factory = require(script.Parent.NetworkFactory)
 
--- IMPORTANTE: Pasta onde ficam todos os seus módulos de Serde (CFrame, Vector3, etc)
+-- REFERÊNCIAS 
+local Factory = require(script.Parent.NetworkFactory)
+local Logger = require(ReplicatedStorage.Shared.Logger)
+
+-- IMPORTANTE
 local SerdeFolder = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Serdes")
 
 export type RemoteType = Factory.RemoteType
 export type NetworkStructure = { [string]: RemoteType }
 
--- Configurações de Engenharia
+-- Configurações
 local LOOK_UP_THRESHOLD = 24
-local DEFAULT_RATE_LIMIT = 0.1 -- 10 chamadas por segundo
+local DEFAULT_RATE_LIMIT = 0.1 -- 100ms entre disparos
 
 local NetworkService = {}
 
 -- Tabelas de Estado e Cache de Serdes
-local RateLimitMap: { [Player]: { [string]: number } } = {}
+local RateLimitMap: { [number]: { [string]: number } } = {} -- Usando UserId para estabilidade
 local Serdes: { [string]: any } = {}
 
--- Carregamento Automático de Camadas de Serialização (Middlewares)
+--  Carregamento de Camadas de Serialização
 for _, module in SerdeFolder:GetChildren() do
 	if module:IsA("ModuleScript") then
 		Serdes[module.Name] = require(module)
@@ -28,46 +33,50 @@ end
 
 -- Limpeza de memória (Prevenção de Memory Leak)
 Players.PlayerRemoving:Connect(function(player)
-	RateLimitMap[player] = nil
+	RateLimitMap[player.UserId] = nil
 end)
 
---- @private Lógica interna de controle de fluxo (Anti-Spam)
+-- MÉTODOS PRIVADOS --
+
+--- @private Lógica de controle de fluxo com Logger integrado
 function NetworkService._isSpamming(player: Player, remoteName: string, customLimit: number?): boolean
 	local now = os.clock()
 	local limit = customLimit or DEFAULT_RATE_LIMIT
+	local pId = player.UserId
 	
-	if not RateLimitMap[player] then RateLimitMap[player] = {} end
+	if not RateLimitMap[pId] then RateLimitMap[pId] = {} end
 	
-	local lastCall = RateLimitMap[player][remoteName] or 0
+	local lastCall = RateLimitMap[pId][remoteName] or 0
 	if (now - lastCall) < limit then
-		warn(`[SECURITY] {player.Name} bloqueado por spam no Remote: {remoteName}`)
+		Logger.Warn("Security", `Rate Limit atingido: {player.Name} no Remote: {remoteName}`)
 		return true 
 	end
 	
-	RateLimitMap[player][remoteName] = now
+	RateLimitMap[pId][remoteName] = now
 	return false
 end
 
---- @private Processa argumentos brutos e converte Buffers usando Serdes carregados
+--- @private Processa Buffers usando a lógica binária organizada
 function NetworkService._processIncomingArgs(args: {any})
 	for i, v in args do
 		if typeof(v) == "buffer" then
-			-- Aqui o sistema tenta reconstruir o dado. 
-			-- Exemplo: Se tiver CFrameSerde na pasta, ele aplica ao buffer.
+			-- Tenta encontrar um Serde compatível (Ex: CFrameSerde)
+			-- Se você usou o sistema de Header IDs, aqui seria o lugar de ler o byte 0
 			if Serdes.CFrameSerde then
 				args[i] = Serdes.CFrameSerde.Deserialize(nil, v)
 			end
-			-- Você pode expandir aqui para detectar IDs de tipo dentro do buffer
 		end
 	end
 	return args
 end
 
---- @public Valida se os tipos de argumentos são os esperados (Anti-Exploit)
+--  MÉTODOS PÚBLICOS --
+
+--- @public Valida tipos de argumentos (Anti-Exploit)
 function NetworkService.validate(args: {any}, expectedTypes: {string}): boolean
 	for i, expectedType in expectedTypes do
 		if typeof(args[i]) ~= expectedType then
-			warn(`[Security] Tipo inválido no argumento {i}. Esperado {expectedType}, recebido {typeof(args[i])}`)
+			Logger.Error("Security", `Contrato violado! Pos {i} esperava {expectedType}, recebeu {typeof(args[i])}`)
 			return false
 		end
 	end
@@ -78,38 +87,63 @@ end
 function NetworkService.getRemote(name: string, remoteType: RemoteType): any
 	local existing = Factory.getExisting(name, remoteType)
 	if existing then return existing end
+	
+	Logger.Info("Network", `Criando novo Remote: {name} ({remoteType})`)
 	return Factory.create(name, remoteType)
 end
 
---- @public Cria uma rede completa a partir de um dicionário (Bridge pattern)
+--- @public [BRIDGE PATTERN]: Gera uma tabela de remotes pronta para uso
 function NetworkService.getNetwork(structure: NetworkStructure, prefix: string?): { [string]: any }
 	local network = {}
 	local remotePrefix = prefix or ""
+	
+	Logger.Debug("Network", "Gerando Bridge de rede...")
 	for name, remoteType in structure do
 		network[name] = NetworkService.getRemote(remotePrefix .. name, remoteType)
 	end
+	
 	return network
 end
 
---- @public Conecta a um RemoteEvent com Anti-Spam e Deserialização automática de Buffers
+--- @public Ouvinte de eventos com todas as camadas de proteção ativas
 function NetworkService.onEvent(remoteName: string, remoteType: RemoteType, callback: (Player, ...any) -> (), customLimit: number?): RBXScriptConnection
 	local remote = NetworkService.getRemote(remoteName, remoteType) :: RemoteEvent
 	
 	return remote.OnServerEvent:Connect(function(player, ...)
-		-- Verifica Spam
+		-- 1. Anti-Spam
 		if NetworkService._isSpamming(player, remoteName, customLimit) then return end
 		
-		-- Converte Buffers em dados legíveis (CFrame, etc)
+		-- 2. Deserialização (SerdeLayer)
 		local processedArgs = NetworkService._processIncomingArgs({...})
 		
-		-- Executa a lógica do jogo
-		callback(player, unpack(processedArgs))
+		-- 3. Execução Protegida
+		task.spawn(function()
+			local success, err = pcall(callback, player, unpack(processedArgs))
+			if not success then
+				Logger.Error("Execution", `Erro no Remote {remoteName}: {err}`)
+			end
+		end)
 	end)
 end
 
---- @public Transmissão otimizada O(1) para grandes volumes de jogadores
+-- [[ TRANSMISSÃO (FIRE) ]] --
+
+function NetworkService.fire(remote: RemoteEvent | UnreliableRemoteEvent, player: Player, ...: any)
+	if not (remote and player) then 
+		Logger.Warn("Network", "Tentativa de FireClient em Remote/Player nulo")
+		return 
+	end
+	remote:FireClient(player, ...)
+end
+
+function NetworkService.fireAll(remote: RemoteEvent | UnreliableRemoteEvent, ...: any)
+	if not remote then return end
+	remote:FireAllClients(...)
+end
+
+--- @public Transmissão otimizada para exclusão de jogadores
 function NetworkService.fireExcept(remote: RemoteEvent | UnreliableRemoteEvent, except: {Player}, ...: any)
-	assert(remote, "[NetworkService] Remote não definido")
+	if not remote then return end
 	local allPlayers = Players:GetPlayers()
 	
 	if #except > LOOK_UP_THRESHOLD then
@@ -123,18 +157,6 @@ function NetworkService.fireExcept(remote: RemoteEvent | UnreliableRemoteEvent, 
 			if not table.find(except, p) then remote:FireClient(p, ...) end
 		end
 	end
-end
-
---- @public Atalho seguro para FireClient
-function NetworkService.fire(remote: RemoteEvent | UnreliableRemoteEvent, player: Player, ...: any)
-	if not (remote and player) then return end
-	remote:FireClient(player, ...)
-end
-
---- @public Atalho seguro para FireAllClients (Broadcast)
-function NetworkService.fireAll(remote: RemoteEvent | UnreliableRemoteEvent, ...: any)
-	if not remote then return end
-	remote:FireAllClients(...)
 end
 
 return NetworkService
