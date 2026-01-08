@@ -50,8 +50,6 @@ end
 function NetworkService._processIncomingArgs(args: {any})
 	for i, v in args do
 		if typeof(v) == "buffer" then
-			-- Se for buffer, tentamos o CFrame por padrão ou o tipo definido no contrato
-			-- Em um sistema avançado, você pode ler o primeiro byte do buffer para saber o tipo
 			if SerdeLayer.CFrame then
 				args[i] = SerdeLayer.CFrame.Deserialize(nil, v)
 			end
