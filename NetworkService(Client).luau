@@ -3,7 +3,6 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- REFERÊNCIAS
 local Factory = require(script.Parent.NetworkFactory)
 local Logger = require(ReplicatedStorage.Shared.Logger)
 local Promise = require(ReplicatedStorage.Shared.Packages.Promise)
@@ -15,37 +14,45 @@ export type NetworkStructure = { [string]: RemoteType }
 local NetworkService = {}
 local NetworkCache: { [string]: any } = {}
 
--- MÉTODOS PRIVADOS --
-
---- @private Mapeamento automático via SerdeLayer
+--- @private SERIALIZAÇÃO (Cliente -> Servidor)
+-- Transforma tipos complexos em Buffers com ID no Byte 0
 local function _processOutgoingArgs(args: {any})
+	local processed = {}
 	for i, v in args do
 		local t = typeof(v)
-		-- Se o SerdeLayer tiver um módulo com o nome do tipo (ex: CFrame, Vector3)
-		if SerdeLayer[t] and SerdeLayer[t].Serialize then
-			args[i] = SerdeLayer[t].Serialize(nil, v)
-		elseif t == "table" and SerdeLayer.Dict then
-			args[i] = SerdeLayer.Dict.Serialize(nil, v)
+		local compressor = SerdeLayer[t]
+		
+		if compressor and compressor.Serialize then
+			-- O Serialize de cada módulo já deve incluir o ID no Byte 0
+			table.insert(processed, compressor.Serialize(nil, v))
+		else
+			table.insert(processed, v)
 		end
 	end
-	return args
+	return processed
 end
 
---- @private Deserialização automática
+--- @private DESERIALIZAÇÃO (Servidor -> Cliente)
+-- Identifica o tipo do dado pelo ID gravado no buffer
 local function _processIncomingArgs(args: {any})
+	local processed = {}
 	for i, v in args do
 		if typeof(v) == "buffer" then
-			-- Aqui você pode implementar uma lógica de Header se o SerdeLayer suportar
-			-- Por padrão, tentamos o CFrame ou o que for esperado pelo contrato
-			if SerdeLayer.CFrame then
-				args[i] = SerdeLayer.CFrame.Deserialize(nil, v)
+			-- Usa a lógica de ID para encontrar o Serde correto
+			local compressor = SerdeLayer.getCompressorFromBuffer(v)
+			
+			if compressor then
+				table.insert(processed, compressor.Deserialize(nil, v))
+			else
+				Logger.Warn("Network", "Recebi um buffer do servidor com ID desconhecido.")
+				table.insert(processed, v)
 			end
+		else
+			table.insert(processed, v)
 		end
 	end
-	return args
+	return processed
 end
-
--- MÉTODOS PÚBLICOS --
 
 function NetworkService.getRemote(name: string, remoteType: RemoteType): any
 	if NetworkCache[name] then return NetworkCache[name] end
@@ -60,14 +67,20 @@ function NetworkService.getRemote(name: string, remoteType: RemoteType): any
 	return remote
 end
 
+--- @public Envia dados ao servidor (Com compressão binária)
 function NetworkService.send(name: string, remoteType: RemoteType, ...: any)
 	local remote = NetworkService.getRemote(name, remoteType)
 	if not remote then return end
-	remote:FireServer(unpack(_processOutgoingArgs({...})))
+	
+	local args = _processOutgoingArgs({...})
+	remote:FireServer(unpack(args))
 end
 
+--- @public Requisita um dado do servidor (Via Promise)
 function NetworkService.request(name: string, remoteType: RemoteType, ...: any)
 	local remote = NetworkService.getRemote(name, remoteType) :: RemoteFunction
+	if not remote then return Promise.reject("Remote not found") end
+	
 	local args = _processOutgoingArgs({...})
 	
 	return Promise.new(function(resolve, reject)
@@ -76,6 +89,7 @@ function NetworkService.request(name: string, remoteType: RemoteType, ...: any)
 		end)
 		
 		if success then
+			-- Deserializa o retorno do servidor caso seja um buffer
 			resolve(_processIncomingArgs({result})[1])
 		else
 			Logger.Error("Network", `Request failed: {name}`)
@@ -84,12 +98,15 @@ function NetworkService.request(name: string, remoteType: RemoteType, ...: any)
 	end)
 end
 
+--- @public Escuta eventos vindos do servidor
 function NetworkService.onEvent(remote: RemoteEvent | UnreliableRemoteEvent, callback: (...any) -> ()): RBXScriptConnection
 	return remote.OnClientEvent:Connect(function(...)
 		local args = _processIncomingArgs({...})
 		task.spawn(function()
 			local success, err = pcall(callback, unpack(args))
-			if not success then Logger.Error("Execution", `UI Callback Error: {err}`) end
+			if not success then 
+				Logger.Error("Execution", `UI Callback Error: {err}`) 
+			end
 		end)
 	end)
 end
