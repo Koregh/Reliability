@@ -2,7 +2,7 @@
 local Logger = {}
 
 -- CONFIGURAÇÃO
--- Se for false, o Logger.Info não aparecerá 
+
 local DEBUG_MODE = true
 
 -- NÍVEIS DE LOG
@@ -22,8 +22,7 @@ local function _write(level: LogLevel, category: string, message: string)
 
 	local timestamp = os.date("%H:%M:%S")
 	local config = Levels[level]
-	
-	-- Formatação: [HORA] [LEVEL] [CATEGORIA] Mensagem
+
 	local output = string.format("%s %s [%s]: %s", 
 		timestamp, 
 		config.prefix, 
@@ -39,8 +38,6 @@ local function _write(level: LogLevel, category: string, message: string)
 		print(output)
 	end
 end
-
--- MÉTODOS PÚBLICOS --
 
 function Logger.Debug(category: string, message: string)
 	_write("DEBUG", category, message)
